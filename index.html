@@ -155,7 +155,7 @@
         <div class="current-waits" id="current-waits"></div>
 
         <div class="graph-card">
-            <h2>Today's Wait Times</h2>
+            <h2>Today vs Yesterday</h2>
             <div class="chart-container">
                 <canvas id="chart"></canvas>
             </div>
@@ -170,22 +170,8 @@
     <script>
         const COLORS = ['#60a5fa', '#f97316', '#4ade80', '#f472b6', '#a78bfa', '#facc15'];
 
-        // Convert a Date to a "YYYY-MM-DD" string in Central Time
         function toCentralDateStr(date) {
             return date.toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
-        }
-
-        // Convert a Date to Central Time display parts
-        function toCentralParts(date) {
-            return {
-                dateStr: toCentralDateStr(date),
-                display: date.toLocaleString('en-US', {
-                    timeZone: 'America/Chicago',
-                    month: 'short', day: 'numeric',
-                    hour: 'numeric', minute: '2-digit',
-                    hour12: true
-                })
-            };
         }
 
         function waitColor(min) {
@@ -195,31 +181,59 @@
             return 'wait-extreme';
         }
 
+        // Get "today" and "yesterday" date strings in Central Time
+        function getCentralDays() {
+            const now = new Date();
+            const todayStr = toCentralDateStr(now);
+            const yesterday = new Date(now.getTime() - 24 * 3600000);
+            // Edge case: if it's early morning CT, subtracting 24h might still be today in UTC
+            // Use the CT date string approach to be safe
+            const yesterdayStr = toCentralDateStr(yesterday);
+            return { todayStr, yesterdayStr };
+        }
+
+        // Normalize a timestamp to "time of day" on a fixed reference date
+        // so today and yesterday overlay on the same x-axis
+        function toTimeOfDay(date) {
+            const ctStr = date.toLocaleString('en-US', {
+                timeZone: 'America/Chicago',
+                hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'
+            });
+            // Parse HH:MM:SS and put on a fixed date
+            const parts = ctStr.split(':');
+            const ref = new Date(2000, 0, 1, parseInt(parts[0]), parseInt(parts[1]), parseInt(parts[2]));
+            // Shift +2h so Chart.js (rendering in Pacific) shows Central labels
+            return new Date(ref.getTime() + 2 * 3600000);
+        }
+
         async function loadData() {
             const res = await fetch('iah-wait-times.log?t=' + Date.now());
             const text = await res.text();
             const lines = text.trim().split('\n').filter(l => l.trim());
 
-            const todayStr = toCentralDateStr(new Date());
-            const terminals = {};
+            const { todayStr, yesterdayStr } = getCentralDays();
+            const todayTerminals = {};
+            const yesterdayTerminals = {};
 
             for (const line of lines) {
                 const tsMatch = line.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})/);
                 if (!tsMatch) continue;
 
-                // Parse as Pacific Time
                 const ptDate = new Date(tsMatch[1] + 'T' + tsMatch[2] + '-07:00');
+                const ctDay = toCentralDateStr(ptDate);
 
-                // Check if this timestamp falls on "today" in Central Time
-                if (toCentralDateStr(ptDate) !== todayStr) continue;
+                let bucket = null;
+                if (ctDay === todayStr) bucket = todayTerminals;
+                else if (ctDay === yesterdayStr) bucket = yesterdayTerminals;
+                else continue;
 
                 const rest = line.substring(19).trim();
                 for (const entry of rest.split('  |  ')) {
                     const minMatch = entry.trim().match(/(.+?):\s*(\d+)\s*min/);
                     if (minMatch) {
                         const name = minMatch[1].trim();
-                        if (!terminals[name]) terminals[name] = [];
-                        terminals[name].push({ x: new Date(ptDate.getTime() + 2 * 3600000), y: parseInt(minMatch[2]) });
+                        if (!bucket[name]) bucket[name] = [];
+                        bucket[name].push({ x: toTimeOfDay(ptDate), y: parseInt(minMatch[2]) });
                     }
                 }
             }
@@ -229,8 +243,11 @@
             const lastTs = lastLine.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
             if (lastTs) {
                 const pt = new Date(lastTs[1].replace(' ', 'T') + '-07:00');
-                const parts = toCentralParts(pt);
-                document.getElementById('last-updated').textContent = parts.display;
+                document.getElementById('last-updated').textContent = pt.toLocaleString('en-US', {
+                    timeZone: 'America/Chicago',
+                    month: 'short', day: 'numeric',
+                    hour: 'numeric', minute: '2-digit', hour12: true
+                });
             }
 
             // Current wait cards
@@ -264,18 +281,46 @@
             document.getElementById('status').textContent = hasData ? 'Live' : 'No Data';
             document.getElementById('status').className = 'status-value' + (hasData ? ' live' : '');
 
-            // Build chart
-            const datasets = Object.keys(terminals).sort().map((name, i) => ({
-                label: name,
-                data: terminals[name],
-                borderColor: COLORS[i % COLORS.length],
-                backgroundColor: COLORS[i % COLORS.length] + '33',
-                borderWidth: 2.5,
-                pointRadius: 2,
-                pointHoverRadius: 6,
-                tension: 0.1,
-                fill: false,
-            }));
+            // Build datasets: today (solid) + yesterday (faded)
+            const allNames = [...new Set([...Object.keys(todayTerminals), ...Object.keys(yesterdayTerminals)])].sort();
+            const datasets = [];
+
+            allNames.forEach((name, i) => {
+                const color = COLORS[i % COLORS.length];
+
+                // Yesterday (faded, behind)
+                if (yesterdayTerminals[name]) {
+                    datasets.push({
+                        label: name + ' (yesterday)',
+                        data: yesterdayTerminals[name],
+                        borderColor: color + '55',
+                        backgroundColor: color + '11',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        pointHoverRadius: 4,
+                        tension: 0.1,
+                        fill: false,
+                        borderDash: [6, 3],
+                        order: 2,
+                    });
+                }
+
+                // Today (solid, on top)
+                if (todayTerminals[name]) {
+                    datasets.push({
+                        label: name + ' (today)',
+                        data: todayTerminals[name],
+                        borderColor: color,
+                        backgroundColor: color + '33',
+                        borderWidth: 2.5,
+                        pointRadius: 2,
+                        pointHoverRadius: 6,
+                        tension: 0.1,
+                        fill: false,
+                        order: 1,
+                    });
+                }
+            });
 
             new Chart(document.getElementById('chart'), {
                 type: 'line',
@@ -290,7 +335,13 @@
                     plugins: {
                         legend: {
                             position: 'bottom',
-                            labels: { color: '#e2e8f0', padding: 20, font: { size: 13 } }
+                            labels: {
+                                color: '#e2e8f0',
+                                padding: 16,
+                                font: { size: 12 },
+                                usePointStyle: true,
+                                pointStyleWidth: 20,
+                            }
                         },
                         tooltip: {
                             backgroundColor: '#1e293b',
@@ -301,9 +352,11 @@
                             callbacks: {
                                 title: ctx => {
                                     const d = new Date(ctx[0].parsed.x);
-                                    return d.toLocaleTimeString('en-US', {
-                                        hour: 'numeric', minute: '2-digit', hour12: true
-                                    });
+                                    // Undo the +2h shift to get actual CT time
+                                    const ct = new Date(d.getTime() - 2 * 3600000);
+                                    const h = ct.getHours(), m = String(ct.getMinutes()).padStart(2, '0');
+                                    const ampm = h >= 12 ? 'PM' : 'AM';
+                                    return `${(h % 12) || 12}:${m} ${ampm} CT`;
                                 },
                                 label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y} min`
                             }
@@ -315,7 +368,7 @@
                             time: { unit: 'hour', displayFormats: { hour: 'h a' } },
                             ticks: { color: '#94a3b8', font: { size: 11 } },
                             grid: { color: '#334155', lineWidth: 0.5 },
-                            title: { display: true, text: 'Time (Central)', color: '#e2e8f0', font: { size: 13 } }
+                            title: { display: true, text: 'Time of Day (Central)', color: '#e2e8f0', font: { size: 13 } }
                         },
                         y: {
                             min: 0,
