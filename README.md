@@ -1,6 +1,6 @@
 # IAH Security Wait Times
 
-[![Fetch IAH Wait Times](https://github.com/adonnell6/iah-wait-times/actions/workflows/fetch.yml/badge.svg?event=workflow_dispatch)](https://github.com/adonnell6/iah-wait-times/actions/workflows/fetch.yml)
+[![GitHub Pages](https://github.com/adonnell6/iah-wait-times/actions/workflows/pages/pages-build-deployment/badge.svg)](https://github.com/adonnell6/iah-wait-times/actions/workflows/pages/pages-build-deployment) [![Fetch IAH Wait Times](https://github.com/adonnell6/iah-wait-times/actions/workflows/fetch.yml/badge.svg?event=workflow_dispatch)](https://github.com/adonnell6/iah-wait-times/actions/workflows/fetch.yml)
 
 Automated logging of TSA security checkpoint wait times at George Bush Intercontinental Airport (IAH) in Houston, TX.
 
