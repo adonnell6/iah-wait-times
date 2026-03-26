@@ -228,6 +228,11 @@
             }
         }
         loadStatus();
+        
+        document.getElementById('graph').addEventListener('click', function() {
+          window.open(this.src, '_blank');
+        });
+        document.getElementById('graph').style.cursor = 'pointer';
     </script>
 </body>
 </html>
