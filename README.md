@@ -6,6 +6,10 @@ Automated logging of TSA security checkpoint wait times at George Bush Intercont
 
 A GitHub Actions workflow polls the Houston Airports API every 5 minutes and appends wait times to `iah-wait-times.log`.
 
+## Today's Wait Times
+
+![Today's Wait Times](iah-wait-times-today.png)
+
 ## Log Format
 
 ```
