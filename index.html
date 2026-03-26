@@ -61,6 +61,42 @@
         .status-value.live {
             color: #4ade80;
         }
+        .current-waits {
+            display: flex;
+            justify-content: center;
+            gap: 1.5rem;
+            margin: 1.5rem 0;
+            flex-wrap: wrap;
+        }
+        .wait-card {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 1.25rem 1.5rem;
+            text-align: center;
+            min-width: 180px;
+            flex: 1;
+            max-width: 280px;
+        }
+        .wait-card .terminal-name {
+            font-size: 0.85rem;
+            color: #94a3b8;
+            margin-bottom: 0.5rem;
+        }
+        .wait-card .wait-value {
+            font-size: 2rem;
+            font-weight: 700;
+        }
+        .wait-card .wait-unit {
+            font-size: 0.9rem;
+            color: #94a3b8;
+            font-weight: 400;
+        }
+        .wait-low { color: #4ade80; }
+        .wait-med { color: #facc15; }
+        .wait-high { color: #f97316; }
+        .wait-extreme { color: #ef4444; }
+        .wait-closed { color: #64748b; }
         .graph-card {
             background: rgba(255,255,255,0.03);
             border: 1px solid rgba(255,255,255,0.08);
@@ -112,6 +148,8 @@
             </div>
         </div>
 
+        <div class="current-waits" id="current-waits"></div>
+
         <div class="graph-card">
             <h2>Today's Wait Times</h2>
             <img src="iah-wait-times-today.png" alt="Today's IAH Security Wait Times Graph" id="graph">
@@ -124,6 +162,13 @@
     </div>
 
     <script>
+        function waitColor(min) {
+            if (min <= 15) return 'wait-low';
+            if (min <= 45) return 'wait-med';
+            if (min <= 90) return 'wait-high';
+            return 'wait-extreme';
+        }
+
         async function loadStatus() {
             try {
                 const res = await fetch('iah-wait-times.log');
@@ -133,7 +178,6 @@
 
                 const tsMatch = last.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
                 if (tsMatch) {
-                    // Parse as Pacific, convert to Central (+2h)
                     const pt = new Date(tsMatch[1].replace(' ', 'T') + '-07:00');
                     const ct = new Date(pt.getTime() + 2 * 60 * 60 * 1000);
                     const h = ct.getHours();
@@ -144,11 +188,39 @@
                         `${ct.toLocaleDateString('en-US', {month: 'short', day: 'numeric'})} ${h12}:${m} ${ampm}`;
                 }
 
-                const hasData = last.includes('min');
+                const rest = last.substring(19).trim();
+                const entries = rest.split('  |  ');
+                const container = document.getElementById('current-waits');
+                container.innerHTML = '';
+
+                let hasData = false;
+                entries.forEach(entry => {
+                    entry = entry.trim();
+                    const minMatch = entry.match(/(.+?):\s*(\d+)\s*min/);
+                    const closedMatch = entry.match(/(.+?):\s*CLOSED/);
+
+                    if (minMatch) {
+                        hasData = true;
+                        const name = minMatch[1].trim().replace('IAH ', '');
+                        const mins = parseInt(minMatch[2]);
+                        container.innerHTML += `
+                            <div class="wait-card">
+                                <div class="terminal-name">${name}</div>
+                                <div class="wait-value ${waitColor(mins)}">${mins}<span class="wait-unit"> min</span></div>
+                            </div>`;
+                    } else if (closedMatch) {
+                        const name = closedMatch[1].trim().replace('IAH ', '');
+                        container.innerHTML += `
+                            <div class="wait-card">
+                                <div class="terminal-name">${name}</div>
+                                <div class="wait-value wait-closed">Closed</div>
+                            </div>`;
+                    }
+                });
+
                 document.getElementById('status').textContent = hasData ? 'Live' : 'No Data';
                 document.getElementById('status').className = 'status-value' + (hasData ? ' live' : '');
 
-                // Cache-bust the graph
                 document.getElementById('graph').src = 'iah-wait-times-today.png?t=' + Date.now();
             } catch (e) {
                 document.getElementById('status').textContent = 'Error';
