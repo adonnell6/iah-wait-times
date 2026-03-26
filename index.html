@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>IAH Security Wait Times</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -58,9 +60,7 @@
             font-weight: 600;
             color: #f8fafc;
         }
-        .status-value.live {
-            color: #4ade80;
-        }
+        .status-value.live { color: #4ade80; }
         .current-waits {
             display: flex;
             justify-content: center;
@@ -110,9 +110,10 @@
             margin-bottom: 1rem;
             color: #cbd5e1;
         }
-        .graph-card img {
+        .chart-container {
+            position: relative;
             width: 100%;
-            border-radius: 8px;
+            aspect-ratio: 7 / 3;
         }
         footer {
             text-align: center;
@@ -125,9 +126,7 @@
             color: #60a5fa;
             text-decoration: none;
         }
-        footer a:hover {
-            text-decoration: underline;
-        }
+        footer a:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
@@ -152,7 +151,9 @@
 
         <div class="graph-card">
             <h2>Today's Wait Times</h2>
-            <img src="" alt="Today's IAH Security Wait Times Graph" id="graph">
+            <div class="chart-container">
+                <canvas id="chart"></canvas>
+            </div>
         </div>
 
         <footer>
@@ -162,6 +163,14 @@
     </div>
 
     <script>
+        const COLORS = ['#60a5fa', '#f97316', '#4ade80', '#f472b6', '#a78bfa', '#facc15'];
+        const PT_OFFSET = -7 * 60;
+        const CT_OFFSET = -5 * 60;
+
+        function ptToCt(date) {
+            return new Date(date.getTime() + (CT_OFFSET - PT_OFFSET) * 60000);
+        }
+
         function waitColor(min) {
             if (min <= 15) return 'wait-low';
             if (min <= 45) return 'wait-med';
@@ -169,70 +178,143 @@
             return 'wait-extreme';
         }
 
-        async function loadStatus() {
-            try {
-                const res = await fetch('iah-wait-times.log');
-                const text = await res.text();
-                const lines = text.trim().split('\n').filter(l => l.trim());
-                const last = lines[lines.length - 1];
-
-                const tsMatch = last.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
-                if (tsMatch) {
-                    const pt = new Date(tsMatch[1].replace(' ', 'T') + '-07:00');
-                    const ct = new Date(pt.getTime() + 2 * 60 * 60 * 1000);
-                    const h = ct.getHours();
-                    const m = String(ct.getMinutes()).padStart(2, '0');
-                    const ampm = h >= 12 ? 'PM' : 'AM';
-                    const h12 = h % 12 || 12;
-                    document.getElementById('last-updated').textContent =
-                        `${ct.toLocaleDateString('en-US', {month: 'short', day: 'numeric'})} ${h12}:${m} ${ampm}`;
-                }
-
-                const rest = last.substring(19).trim();
-                const entries = rest.split('  |  ');
-                const container = document.getElementById('current-waits');
-                container.innerHTML = '';
-
-                let hasData = false;
-                entries.forEach(entry => {
-                    entry = entry.trim();
-                    const minMatch = entry.match(/(.+?):\s*(\d+)\s*min/);
-                    const closedMatch = entry.match(/(.+?):\s*CLOSED/);
-
-                    if (minMatch) {
-                        hasData = true;
-                        const name = minMatch[1].trim().replace('IAH ', '');
-                        const mins = parseInt(minMatch[2]);
-                        container.innerHTML += `
-                            <div class="wait-card">
-                                <div class="terminal-name">${name}</div>
-                                <div class="wait-value ${waitColor(mins)}">${mins}<span class="wait-unit"> min</span></div>
-                            </div>`;
-                    } else if (closedMatch) {
-                        const name = closedMatch[1].trim().replace('IAH ', '');
-                        container.innerHTML += `
-                            <div class="wait-card">
-                                <div class="terminal-name">${name}</div>
-                                <div class="wait-value wait-closed">Closed</div>
-                            </div>`;
-                    }
-                });
-
-                document.getElementById('status').textContent = hasData ? 'Live' : 'No Data';
-                document.getElementById('status').className = 'status-value' + (hasData ? ' live' : '');
-
-                document.getElementById('graph').src = 'iah-wait-times-today.png?t=' + Date.now();
-            } catch (e) {
-                document.getElementById('status').textContent = 'Error';
-                document.getElementById('last-updated').textContent = 'Unavailable';
-            }
+        function todayCt() {
+            const now = new Date();
+            const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+            const ct = new Date(utc + CT_OFFSET * 60000);
+            return ct.toISOString().slice(0, 10);
         }
-        loadStatus();
-        
-        document.getElementById('graph').addEventListener('click', function() {
-          window.open(this.src, '_blank');
-        });
-        document.getElementById('graph').style.cursor = 'pointer';
+
+        async function loadData() {
+            const res = await fetch('iah-wait-times.log?t=' + Date.now());
+            const text = await res.text();
+            const lines = text.trim().split('\n').filter(l => l.trim());
+
+            const today = todayCt();
+            const terminals = {};
+
+            for (const line of lines) {
+                const tsMatch = line.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})/);
+                if (!tsMatch) continue;
+
+                const ptDate = new Date(tsMatch[1] + 'T' + tsMatch[2] + '-07:00');
+                const ctDate = ptToCt(ptDate);
+                const ctDay = ctDate.toISOString().slice(0, 10);
+                if (ctDay !== today) continue;
+
+                const rest = line.substring(19).trim();
+                for (const entry of rest.split('  |  ')) {
+                    const minMatch = entry.trim().match(/(.+?):\s*(\d+)\s*min/);
+                    if (minMatch) {
+                        const name = minMatch[1].trim();
+                        if (!terminals[name]) terminals[name] = [];
+                        terminals[name].push({ x: ctDate, y: parseInt(minMatch[2]) });
+                    }
+                }
+            }
+
+            // Update status
+            const lastLine = lines[lines.length - 1];
+            const lastTs = lastLine.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
+            if (lastTs) {
+                const pt = new Date(lastTs[1].replace(' ', 'T') + '-07:00');
+                const ct = ptToCt(pt);
+                const h = ct.getHours(), m = String(ct.getMinutes()).padStart(2, '0');
+                const ampm = h >= 12 ? 'PM' : 'AM';
+                document.getElementById('last-updated').textContent =
+                    `${ct.toLocaleDateString('en-US', {month: 'short', day: 'numeric'})} ${(h % 12) || 12}:${m} ${ampm}`;
+            }
+
+            // Current wait cards
+            const lastRest = lastLine.substring(19).trim();
+            const container = document.getElementById('current-waits');
+            container.innerHTML = '';
+            let hasData = false;
+
+            for (const entry of lastRest.split('  |  ')) {
+                const minMatch = entry.trim().match(/(.+?):\s*(\d+)\s*min/);
+                const closedMatch = entry.trim().match(/(.+?):\s*CLOSED/);
+                if (minMatch) {
+                    hasData = true;
+                    const name = minMatch[1].trim().replace('IAH ', '');
+                    const mins = parseInt(minMatch[2]);
+                    container.innerHTML += `
+                        <div class="wait-card">
+                            <div class="terminal-name">${name}</div>
+                            <div class="wait-value ${waitColor(mins)}">${mins}<span class="wait-unit"> min</span></div>
+                        </div>`;
+                } else if (closedMatch) {
+                    const name = closedMatch[1].trim().replace('IAH ', '');
+                    container.innerHTML += `
+                        <div class="wait-card">
+                            <div class="terminal-name">${name}</div>
+                            <div class="wait-value wait-closed">Closed</div>
+                        </div>`;
+                }
+            }
+
+            document.getElementById('status').textContent = hasData ? 'Live' : 'No Data';
+            document.getElementById('status').className = 'status-value' + (hasData ? ' live' : '');
+
+            // Build chart
+            const datasets = Object.keys(terminals).sort().map((name, i) => ({
+                label: name,
+                data: terminals[name],
+                borderColor: COLORS[i % COLORS.length],
+                backgroundColor: COLORS[i % COLORS.length] + '33',
+                borderWidth: 2.5,
+                pointRadius: 2,
+                pointHoverRadius: 6,
+                tension: 0.1,
+                fill: false,
+            }));
+
+            new Chart(document.getElementById('chart'), {
+                type: 'line',
+                data: { datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: { color: '#e2e8f0', padding: 20, font: { size: 13 } }
+                        },
+                        tooltip: {
+                            backgroundColor: '#1e293b',
+                            titleColor: '#e2e8f0',
+                            bodyColor: '#e2e8f0',
+                            borderColor: '#334155',
+                            borderWidth: 1,
+                            callbacks: {
+                                label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y} min`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: { unit: 'hour', displayFormats: { hour: 'HH:mm' } },
+                            ticks: { color: '#94a3b8', font: { size: 11 } },
+                            grid: { color: '#334155', lineWidth: 0.5 },
+                            title: { display: true, text: 'Time (Central)', color: '#e2e8f0', font: { size: 13 } }
+                        },
+                        y: {
+                            min: 0,
+                            ticks: { color: '#94a3b8', font: { size: 11 } },
+                            grid: { color: '#334155', lineWidth: 0.5 },
+                            title: { display: true, text: 'Wait Time (minutes)', color: '#e2e8f0', font: { size: 13 } }
+                        }
+                    }
+                }
+            });
+        }
+
+        loadData();
     </script>
 </body>
 </html>
