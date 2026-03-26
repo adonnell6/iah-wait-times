@@ -113,11 +113,11 @@
         .chart-container {
             position: relative;
             width: 100%;
-            aspect-ratio: 7 / 3;
+            height: 400px;
         }
         @media (max-width: 640px) {
             .chart-container {
-                aspect-ratio: 4 / 3;
+                height: 300px;
             }
         }
         footer {
@@ -279,7 +279,7 @@
                 data: { datasets },
                 options: {
                     responsive: true,
-                    maintainAspectRatio: true,
+                    maintainAspectRatio: false,
                     interaction: {
                         mode: 'index',
                         intersect: false,
