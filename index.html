@@ -155,9 +155,16 @@
         <div class="current-waits" id="current-waits"></div>
 
         <div class="graph-card">
+            <h2>Today's Wait Times</h2>
+            <div class="chart-container">
+                <canvas id="chart-today"></canvas>
+            </div>
+        </div>
+
+        <div class="graph-card">
             <h2>Today vs Yesterday</h2>
             <div class="chart-container">
-                <canvas id="chart"></canvas>
+                <canvas id="chart-compare"></canvas>
             </div>
         </div>
 
@@ -181,29 +188,71 @@
             return 'wait-extreme';
         }
 
-        // Get "today" and "yesterday" date strings in Central Time
         function getCentralDays() {
             const now = new Date();
             const todayStr = toCentralDateStr(now);
-            const yesterday = new Date(now.getTime() - 24 * 3600000);
-            // Edge case: if it's early morning CT, subtracting 24h might still be today in UTC
-            // Use the CT date string approach to be safe
-            const yesterdayStr = toCentralDateStr(yesterday);
+            const yesterdayStr = toCentralDateStr(new Date(now.getTime() - 24 * 3600000));
             return { todayStr, yesterdayStr };
         }
 
-        // Normalize a timestamp to "time of day" on a fixed reference date
-        // so today and yesterday overlay on the same x-axis
         function toTimeOfDay(date) {
             const ctStr = date.toLocaleString('en-US', {
                 timeZone: 'America/Chicago',
                 hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'
             });
-            // Parse HH:MM:SS and put on a fixed date
             const parts = ctStr.split(':');
             const ref = new Date(2000, 0, 1, parseInt(parts[0]), parseInt(parts[1]), parseInt(parts[2]));
-            // Shift +2h so Chart.js (rendering in Pacific) shows Central labels
             return new Date(ref.getTime() + 2 * 3600000);
+        }
+
+        function toCentralShifted(ptDate) {
+            return new Date(ptDate.getTime() + 2 * 3600000);
+        }
+
+        function makeChartOptions(legendPosition) {
+            return {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        position: legendPosition,
+                        labels: { color: '#e2e8f0', padding: 16, font: { size: 12 }, usePointStyle: true, pointStyleWidth: 20 }
+                    },
+                    tooltip: {
+                        backgroundColor: '#1e293b',
+                        titleColor: '#e2e8f0',
+                        bodyColor: '#e2e8f0',
+                        borderColor: '#334155',
+                        borderWidth: 1,
+                        callbacks: {
+                            title: ctx => {
+                                const d = new Date(ctx[0].parsed.x);
+                                const ct = new Date(d.getTime() - 2 * 3600000);
+                                const h = ct.getHours(), m = String(ct.getMinutes()).padStart(2, '0');
+                                const ampm = h >= 12 ? 'PM' : 'AM';
+                                return `${(h % 12) || 12}:${m} ${ampm} CT`;
+                            },
+                            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y} min`
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: { unit: 'hour', displayFormats: { hour: 'h a' } },
+                        ticks: { color: '#94a3b8', font: { size: 11 } },
+                        grid: { color: '#334155', lineWidth: 0.5 },
+                        title: { display: true, text: 'Time of Day (Central)', color: '#e2e8f0', font: { size: 13 } }
+                    },
+                    y: {
+                        min: 0,
+                        ticks: { color: '#94a3b8', font: { size: 11 } },
+                        grid: { color: '#334155', lineWidth: 0.5 },
+                        title: { display: true, text: 'Wait Time (minutes)', color: '#e2e8f0', font: { size: 13 } }
+                    }
+                }
+            };
         }
 
         async function loadData() {
@@ -238,7 +287,7 @@
                 }
             }
 
-            // Update status from last line
+            // Update status
             const lastLine = lines[lines.length - 1];
             const lastTs = lastLine.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
             if (lastTs) {
@@ -281,16 +330,34 @@
             document.getElementById('status').textContent = hasData ? 'Live' : 'No Data';
             document.getElementById('status').className = 'status-value' + (hasData ? ' live' : '');
 
-            // Build datasets: today (solid) + yesterday (faded)
+            // Chart 1: Today only
+            const todayDatasets = Object.keys(todayTerminals).sort().map((name, i) => ({
+                label: name,
+                data: todayTerminals[name],
+                borderColor: COLORS[i % COLORS.length],
+                backgroundColor: COLORS[i % COLORS.length] + '33',
+                borderWidth: 2.5,
+                pointRadius: 0,
+                pointHoverRadius: 6,
+                tension: 0.1,
+                fill: false,
+            }));
+
+            new Chart(document.getElementById('chart-today'), {
+                type: 'line',
+                data: { datasets: todayDatasets },
+                options: makeChartOptions('bottom'),
+            });
+
+            // Chart 2: Today vs Yesterday
             const allNames = [...new Set([...Object.keys(todayTerminals), ...Object.keys(yesterdayTerminals)])].sort();
-            const datasets = [];
+            const compareDatasets = [];
 
             allNames.forEach((name, i) => {
                 const color = COLORS[i % COLORS.length];
 
-                // Yesterday (faded, behind)
                 if (yesterdayTerminals[name]) {
-                    datasets.push({
+                    compareDatasets.push({
                         label: name + ' (yesterday)',
                         data: yesterdayTerminals[name],
                         borderColor: color + '55',
@@ -305,15 +372,14 @@
                     });
                 }
 
-                // Today (solid, on top)
                 if (todayTerminals[name]) {
-                    datasets.push({
+                    compareDatasets.push({
                         label: name + ' (today)',
                         data: todayTerminals[name],
                         borderColor: color,
                         backgroundColor: color + '33',
                         borderWidth: 2.5,
-                        pointRadius: 2,
+                        pointRadius: 0,
                         pointHoverRadius: 6,
                         tension: 0.1,
                         fill: false,
@@ -322,62 +388,10 @@
                 }
             });
 
-            new Chart(document.getElementById('chart'), {
+            new Chart(document.getElementById('chart-compare'), {
                 type: 'line',
-                data: { datasets },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: {
-                        mode: 'index',
-                        intersect: false,
-                    },
-                    plugins: {
-                        legend: {
-                            position: 'bottom',
-                            labels: {
-                                color: '#e2e8f0',
-                                padding: 16,
-                                font: { size: 12 },
-                                usePointStyle: true,
-                                pointStyleWidth: 20,
-                            }
-                        },
-                        tooltip: {
-                            backgroundColor: '#1e293b',
-                            titleColor: '#e2e8f0',
-                            bodyColor: '#e2e8f0',
-                            borderColor: '#334155',
-                            borderWidth: 1,
-                            callbacks: {
-                                title: ctx => {
-                                    const d = new Date(ctx[0].parsed.x);
-                                    // Undo the +2h shift to get actual CT time
-                                    const ct = new Date(d.getTime() - 2 * 3600000);
-                                    const h = ct.getHours(), m = String(ct.getMinutes()).padStart(2, '0');
-                                    const ampm = h >= 12 ? 'PM' : 'AM';
-                                    return `${(h % 12) || 12}:${m} ${ampm} CT`;
-                                },
-                                label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y} min`
-                            }
-                        }
-                    },
-                    scales: {
-                        x: {
-                            type: 'time',
-                            time: { unit: 'hour', displayFormats: { hour: 'h a' } },
-                            ticks: { color: '#94a3b8', font: { size: 11 } },
-                            grid: { color: '#334155', lineWidth: 0.5 },
-                            title: { display: true, text: 'Time of Day (Central)', color: '#e2e8f0', font: { size: 13 } }
-                        },
-                        y: {
-                            min: 0,
-                            ticks: { color: '#94a3b8', font: { size: 11 } },
-                            grid: { color: '#334155', lineWidth: 0.5 },
-                            title: { display: true, text: 'Wait Time (minutes)', color: '#e2e8f0', font: { size: 13 } }
-                        }
-                    }
-                }
+                data: { datasets: compareDatasets },
+                options: makeChartOptions('bottom'),
             });
         }
 
