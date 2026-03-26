@@ -105,7 +105,6 @@ jobs:
           TEXT = "#e2e8f0"
           GRID = "#334155"
           COLORS = ["#60a5fa", "#f97316", "#4ade80", "#f472b6", "#a78bfa", "#facc15"]
-          DASHES = [(None, None), (8, 3), (4, 3), (2, 2), (8, 3, 2, 3), (4, 2, 2, 2)]
 
           fig, ax = plt.subplots(figsize=(14, 6.5), facecolor=BG)
           ax.set_facecolor(CARD_BG)
@@ -113,7 +112,6 @@ jobs:
           for i, (name, data) in enumerate(sorted(terminal_data.items())):
               times, waits = data["times"], data["waits"]
               color = COLORS[i % len(COLORS)]
-              dash = DASHES[i % len(DASHES)]
               seg_times, seg_waits, cur_t, cur_w = [], [], [], []
               for t, w in zip(times, waits):
                   if w is not None:
@@ -125,13 +123,9 @@ jobs:
 
               is_last_seg = len(seg_times)
               for j, (st, sw) in enumerate(zip(seg_times, seg_waits)):
-                  kwargs = dict(color=color, linewidth=2.5, marker="o", markersize=3,
-                                label=name if j == 0 else None, zorder=2 + i, alpha=0.9)
-                  if dash[0] is not None:
-                      kwargs["dashes"] = dash
-                  ax.plot(st, sw, **kwargs)
+                  ax.plot(st, sw, color=color, linewidth=2.5, marker="o", markersize=3,
+                          label=name if j == 0 else None, zorder=2 + i, alpha=0.9)
 
-                  # Label the last data point of the last segment
                   if j == is_last_seg - 1 and sw:
                       last_wait = sw[-1]
                       last_time = st[-1]
@@ -161,6 +155,7 @@ jobs:
           plt.savefig("iah-wait-times-today.png", dpi=150, facecolor=BG, edgecolor="none")
           print("Graph saved.")
           PYEOF
+
 
 
       - name: Commit and push
