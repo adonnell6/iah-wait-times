@@ -1,0 +1,57 @@
+name: Fetch IAH Wait Times
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch wait times and append to log
+        env:
+          API_KEY: ${{ secrets.API_KEY }}
+        run: |
+          response=$(curl -s \
+            -H "Api-Key: $API_KEY" \
+            -H "Api-Version: 120" \
+            -H "Content-Type: application/json" \
+            "https://api.houstonairports.mobi/wait-times/checkpoint/iah")
+
+          timestamp=$(TZ='America/Los_Angeles' date '+%Y-%m-%d %H:%M:%S')
+
+          echo "$response" | python3 -c "
+          import json, sys
+
+          data = json.load(sys.stdin)
+          wait_times = data['data']['wait_times']
+          checkpoints = [wt for wt in wait_times if 'fis' not in (wt.get('attributes') or [])]
+
+          parts = []
+          for cp in checkpoints:
+              name = cp['name']
+              wait_min = cp['waitSeconds'] // 60 if cp['waitSeconds'] is not None else None
+              is_open = cp['isOpen']
+              if not is_open:
+                  parts.append(f'{name}: CLOSED')
+              elif wait_min is not None:
+                  parts.append(f'{name}: {wait_min} min')
+              else:
+                  parts.append(f'{name}: N/A')
+
+          if parts:
+              print('$timestamp  ' + '  |  '.join(parts))
+          else:
+              print('$timestamp  No checkpoints available')
+          " >> iah-wait-times.log
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add iah-wait-times.log
+          git diff --cached --quiet || git commit -m "update wait times"
+          git push
