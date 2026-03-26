@@ -55,6 +55,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add iah-wait-times.log iah-wait-times-today.png
+          git add iah-wait-times.log
           git diff --cached --quiet || git commit -m "update wait times"
           git push
