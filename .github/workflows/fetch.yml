@@ -51,10 +51,91 @@ jobs:
               print('$timestamp  No checkpoints available')
           " >> iah-wait-times.log
 
+      - name: Install matplotlib
+        run: pip install matplotlib
+
+      - name: Generate today's graph
+        run: |
+          python3 << 'PYEOF'
+          import re
+          from collections import defaultdict
+          from datetime import datetime, timedelta, timezone
+
+          import matplotlib
+          matplotlib.use("Agg")
+          import matplotlib.pyplot as plt
+          import matplotlib.dates as mdates
+
+          PT = timezone(timedelta(hours=-7))
+          CT = timezone(timedelta(hours=-5))
+          today_ct = datetime.now(CT).date()
+
+          terminal_data = defaultdict(lambda: {"times": [], "waits": []})
+
+          with open("iah-wait-times.log") as f:
+              for line in f:
+                  line = line.strip()
+                  if not line:
+                      continue
+                  ts_match = re.match(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", line)
+                  if not ts_match:
+                      continue
+                  ts_pt = datetime.strptime(ts_match.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=PT)
+                  ts_ct = ts_pt.astimezone(CT)
+                  if ts_ct.date() != today_ct:
+                      continue
+                  rest = line[len(ts_match.group(0)):].strip()
+                  for entry in rest.split("  |  "):
+                      entry = entry.strip()
+                      m = re.match(r"(.+?):\s*(\d+)\s*min", entry)
+                      if m:
+                          terminal_data[m.group(1).strip()]["times"].append(ts_ct)
+                          terminal_data[m.group(1).strip()]["waits"].append(int(m.group(2)))
+                      m2 = re.match(r"(.+?):\s*CLOSED", entry)
+                      if m2:
+                          terminal_data[m2.group(1).strip()]["times"].append(ts_ct)
+                          terminal_data[m2.group(1).strip()]["waits"].append(None)
+
+          if not terminal_data:
+              print("No data for today, skipping graph.")
+              raise SystemExit(0)
+
+          fig, ax = plt.subplots(figsize=(14, 6))
+          colors = plt.cm.tab10.colors
+
+          for i, (name, data) in enumerate(sorted(terminal_data.items())):
+              times, waits = data["times"], data["waits"]
+              color = colors[i % len(colors)]
+              seg_times, seg_waits, cur_t, cur_w = [], [], [], []
+              for t, w in zip(times, waits):
+                  if w is not None:
+                      cur_t.append(t); cur_w.append(w)
+                  else:
+                      if cur_t: seg_times.append(cur_t); seg_waits.append(cur_w)
+                      cur_t, cur_w = [], []
+              if cur_t: seg_times.append(cur_t); seg_waits.append(cur_w)
+              for j, (st, sw) in enumerate(zip(seg_times, seg_waits)):
+                  ax.plot(st, sw, color=color, linewidth=2, marker="o", markersize=4,
+                          label=name if j == 0 else None, zorder=2)
+
+          ax.set_xlabel("Time (Central)")
+          ax.set_ylabel("Wait Time (minutes)")
+          ax.set_title(f"IAH Security Checkpoint Wait Times — {today_ct.strftime('%A, %B %-d, %Y')} (CT)")
+          ax.legend(loc="upper right")
+          ax.set_ylim(bottom=0)
+          ax.grid(True, alpha=0.3)
+          ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=CT))
+          ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+          fig.autofmt_xdate()
+          plt.tight_layout()
+          plt.savefig("iah-wait-times-today.png", dpi=150)
+          print("Graph saved.")
+          PYEOF
+
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add iah-wait-times.log
+          git add iah-wait-times.log iah-wait-times-today.png
           git diff --cached --quiet || git commit -m "update wait times"
           git push
