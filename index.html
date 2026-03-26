@@ -169,11 +169,23 @@
 
     <script>
         const COLORS = ['#60a5fa', '#f97316', '#4ade80', '#f472b6', '#a78bfa', '#facc15'];
-        const PT_OFFSET = -7 * 60;
-        const CT_OFFSET = -5 * 60;
 
-        function ptToCt(date) {
-            return new Date(date.getTime() + (CT_OFFSET - PT_OFFSET) * 60000);
+        // Convert a Date to a "YYYY-MM-DD" string in Central Time
+        function toCentralDateStr(date) {
+            return date.toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+        }
+
+        // Convert a Date to Central Time display parts
+        function toCentralParts(date) {
+            return {
+                dateStr: toCentralDateStr(date),
+                display: date.toLocaleString('en-US', {
+                    timeZone: 'America/Chicago',
+                    month: 'short', day: 'numeric',
+                    hour: 'numeric', minute: '2-digit',
+                    hour12: true
+                })
+            };
         }
 
         function waitColor(min) {
@@ -183,29 +195,23 @@
             return 'wait-extreme';
         }
 
-        function todayCt() {
-            const now = new Date();
-            const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-            const ct = new Date(utc + CT_OFFSET * 60000);
-            return ct.toISOString().slice(0, 10);
-        }
-
         async function loadData() {
             const res = await fetch('iah-wait-times.log?t=' + Date.now());
             const text = await res.text();
             const lines = text.trim().split('\n').filter(l => l.trim());
 
-            const today = todayCt();
+            const todayStr = toCentralDateStr(new Date());
             const terminals = {};
 
             for (const line of lines) {
                 const tsMatch = line.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})/);
                 if (!tsMatch) continue;
 
+                // Parse as Pacific Time
                 const ptDate = new Date(tsMatch[1] + 'T' + tsMatch[2] + '-07:00');
-                const ctDate = ptToCt(ptDate);
-                const ctDay = ctDate.toISOString().slice(0, 10);
-                if (ctDay !== today) continue;
+
+                // Check if this timestamp falls on "today" in Central Time
+                if (toCentralDateStr(ptDate) !== todayStr) continue;
 
                 const rest = line.substring(19).trim();
                 for (const entry of rest.split('  |  ')) {
@@ -213,21 +219,18 @@
                     if (minMatch) {
                         const name = minMatch[1].trim();
                         if (!terminals[name]) terminals[name] = [];
-                        terminals[name].push({ x: ctDate, y: parseInt(minMatch[2]) });
+                        terminals[name].push({ x: ptDate, y: parseInt(minMatch[2]) });
                     }
                 }
             }
 
-            // Update status
+            // Update status from last line
             const lastLine = lines[lines.length - 1];
             const lastTs = lastLine.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
             if (lastTs) {
                 const pt = new Date(lastTs[1].replace(' ', 'T') + '-07:00');
-                const ct = ptToCt(pt);
-                const h = ct.getHours(), m = String(ct.getMinutes()).padStart(2, '0');
-                const ampm = h >= 12 ? 'PM' : 'AM';
-                document.getElementById('last-updated').textContent =
-                    `${ct.toLocaleDateString('en-US', {month: 'short', day: 'numeric'})} ${(h % 12) || 12}:${m} ${ampm}`;
+                const parts = toCentralParts(pt);
+                document.getElementById('last-updated').textContent = parts.display;
             }
 
             // Current wait cards
@@ -296,6 +299,13 @@
                             borderColor: '#334155',
                             borderWidth: 1,
                             callbacks: {
+                                title: ctx => {
+                                    const d = new Date(ctx[0].parsed.x);
+                                    return d.toLocaleString('en-US', {
+                                        timeZone: 'America/Chicago',
+                                        hour: 'numeric', minute: '2-digit', hour12: true
+                                    });
+                                },
                                 label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y} min`
                             }
                         }
@@ -303,7 +313,7 @@
                     scales: {
                         x: {
                             type: 'time',
-                            time: { unit: 'hour', displayFormats: { hour: 'HH:mm' } },
+                            time: { unit: 'hour', displayFormats: { hour: 'h a' } },
                             ticks: { color: '#94a3b8', font: { size: 11 } },
                             grid: { color: '#334155', lineWidth: 0.5 },
                             title: { display: true, text: 'Time (Central)', color: '#e2e8f0', font: { size: 13 } }
