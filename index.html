@@ -219,7 +219,7 @@
                     if (minMatch) {
                         const name = minMatch[1].trim();
                         if (!terminals[name]) terminals[name] = [];
-                        terminals[name].push({ x: ptDate, y: parseInt(minMatch[2]) });
+                        terminals[name].push({ x: new Date(ptDate.getTime() + 2 * 3600000), y: parseInt(minMatch[2]) });
                     }
                 }
             }
@@ -301,8 +301,7 @@
                             callbacks: {
                                 title: ctx => {
                                     const d = new Date(ctx[0].parsed.x);
-                                    return d.toLocaleString('en-US', {
-                                        timeZone: 'America/Chicago',
+                                    return d.toLocaleTimeString('en-US', {
                                         hour: 'numeric', minute: '2-digit', hour12: true
                                     });
                                 },
